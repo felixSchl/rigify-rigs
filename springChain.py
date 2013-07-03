@@ -12,6 +12,7 @@ The deformation bones copy either the control or the spring bones.
 """
 
 import bpy
+from bpy.props import *
 
 from rna_prop_ui import rna_idprop_ui_prop_get
 
@@ -22,7 +23,72 @@ from ..utils import strip_org, make_mechanism_name, make_deformer_name
 from ..utils import create_circle_widget, create_bone_widget
 from ..utils import align_bone_roll
 
-script = """
+def gen_tabs(depth):
+    return " " * 4 * depth
+
+def get_spring_prop_str(data_path, indent=1, escape=False):
+    """ Expose generic spring constraint props, provided """
+    expose_spring_props = """
+{indent}layout.prop({data_path}, '{l}speed{r}', text="Speed")
+{indent}layout.prop({data_path}, '{l}damping{r}', text="Damping")
+{indent}layout.prop({data_path}, '{l}gravity{r}', text="Gravity")
+{indent}layout.prop({data_path}, '{l}stiffness_x{r}', text="Stiffness X")
+{indent}layout.prop({data_path}, '{l}stiffness_y{r}', text="Stiffness Y")
+{indent}layout.prop({data_path}, '{l}stiffness_z{r}', text="Stiffness Z")
+{indent}layout.prop({data_path}, '{l}dist_threshold{r}', text="Distance threshold")
+{indent}layout.prop({data_path}, '{l}fast_factor{r}', text="Fast factor")
+{indent}layout.prop({data_path}, '{l}reset_on_frame{r}', text="Reset on frame")
+"""
+    return expose_spring_props.format(
+        data_path=data_path,
+        indent=gen_tabs(1),
+        l='["' if escape else "",
+        r='"]' if escape else ""
+    )
+
+def get_props_display(individual, indent=1):
+    indi = """
+{indent}for b in control_bones + preview_bones:
+{indent}if is_selected([b, ]):
+{indent}    spring = lookup[b]
+{indent}    name = spring[len("MCH-"):-len("_target")]
+{indent}    layout.label(text="Spring properties for '%s'" % name)
+{indent}    {props}
+"""
+
+    shared = """
+{indent}{props}
+{indent}for b in control_bones + preview_bones:
+{indent}    if is_selected([b, ]):
+{indent}        spring = lookup[b]
+{indent}        name = spring[len("MCH-"):-len("_target")]
+{indent}        layout.label(text="Spring properties for '%s'" % name)
+{indent}        layout.prop(pose_bones[spring], '["speed_factor"]', text="Speed factor")
+{indent}        layout.prop(pose_bones[spring], '["gravity_factor"]', text="Gravity factor")
+{indent}        layout.prop(pose_bones[spring], '["damping_factor"]', text="Damping factor")
+"""
+
+    if individual:
+        return indi.format(
+            indent=gen_tabs(indent),
+            props=get_spring_prop_str(
+                "pose_bones[spring].constraints[\"Spring\"i]",
+                indent=indent + 1,
+                escape=False
+            )
+        )
+    else:
+        return shared.format(
+            indent=gen_tabs(indent),
+            props=get_spring_prop_str(
+                "pose_bones[prop_bone]",
+                indent=indent + 1,
+                escape=True
+            )
+        )
+
+def get_main_script(individual, prop_bone, lookup, control_bones, preview_bones, spring_bones):
+    main_script = """
 prop_bone = "{prop_bone}"
 lookup = {lookup}
 control_bones = {control_bones}
@@ -31,24 +97,17 @@ spring_bones = {spring_bones}
 
 if is_selected(control_bones + preview_bones):
     layout.prop(pose_bones[prop_bone], '["follow_spring"]', text="Follow spring")
-    
-    # Display Spring properties
-    for b in control_bones + preview_bones:
-        if is_selected([b, ]):
-            spring = lookup[b]
-            name = spring[len("MCH-"):-len("_target")]
-            layout.label(text="Spring properties for '%s'" % name)
-            layout.prop(pose_bones[spring].constraints["Spring"], 'speed')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'damping')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'gravity')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'stiffness_x')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'stiffness_y')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'stiffness_z')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'dist_threshold')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'fast_factor')
-            layout.prop(pose_bones[spring].constraints["Spring"], 'reset_on_frame')
+    {properties_display}
 """
-
+    disp = get_props_display(individual, indent=1)
+    return main_script.format(
+        prop_bone=prop_bone,
+        lookup=lookup,
+        control_bones=control_bones,
+        preview_bones=preview_bones,
+        spring_bones=spring_bones,
+        properties_display=disp
+    )
 
 class Rig:
     def __init__(self, obj, bone, params):
@@ -167,16 +226,83 @@ class Rig:
         prop["soft_min"] = prop["min"] = 0.0
         prop["soft_max"] = prop["max"] = 1.0
 
+        # If using "shared properties", create a proxy for each property
+        # TODO: implement non-float props
+        # Fomat: [Name, min, max, default]
+        if self.params.unify_spring_props:
+            props = [
+                    ["speed",           0,  100,    1.0],
+                    ["damping",         0,  1.0,    0.5],
+                    ["gravity",         0,  100,    0.0],
+                    ["stiffness_x",     0,  1.0,    0.0],
+                    ["stiffness_y",     0,  1.0,    0.0],
+                    ["stiffness_z",     0,  1.0,    0.0],
+                    ["dist_threshold",  0,   10,    1.0],
+                    ["fast_factor",     0,   10,    3.0],
+                    # Hacky:
+                    ["reset_on_frame", -99000, 99000, 1],
+                    ]
+            for name, mini, maxi, default in props:
+                prop = rna_idprop_ui_prop_get(propPb, name, create=True)
+                propPb[name] = default
+                prop["soft_min"] = prop["min"] = mini
+                prop["soft_max"] = prop["max"] = maxi
+
         #---------------------------------------------------------------------------------------------------------------
         # Constraining
         #---------------------------------------------------------------------------------------------------------------
         bpy.ops.object.mode_set(mode='OBJECT')
 
         # Create Spring constraints
+        propPb = self.obj.pose.bones[propBoneName]
         for sourceName, targetName in zip(self.mch_source, self.mch_target):
+            factorPb = self.obj.pose.bones[targetName]
+
             con = self.obj.pose.bones[targetName].constraints.new('SPRING')
             con.target = self.obj
             con.subtarget = sourceName
+
+            # If "shared propreties" are enabled, create a factor property for each "tweakable" poperty
+            if self.params.unify_spring_props:
+                tweakable_props = [
+                    "speed",
+                    "gravity",
+                    "damping"
+                ]
+
+                for n in tweakable_props:
+                    prop_name = "%s_factor" % n
+                    prop = rna_idprop_ui_prop_get(factorPb, prop_name, create=True)
+                    factorPb[prop_name] = 1
+                    prop["soft_min"] = prop["min"] = 0
+                    prop["soft_max"] = prop["max"] = 100
+                    print(prop)
+
+                for name, mini, maxi, default in props:
+                    fcurve = con.driver_add(name)
+                    driver = fcurve.driver
+
+                    driver.type = 'SCRIPTED'
+                    if name in tweakable_props:
+                        driver.expression = 'var * factor'
+                    else:
+                        driver.expression = 'var'
+
+                    # Prop bone dictates
+                    var1 = driver.variables.new()
+                    var1.name = 'var'
+                    var1.targets[0].id_type = 'OBJECT'
+                    var1.targets[0].id = self.obj
+                    var1.targets[0].data_path = propPb.path_from_id() + '["%s"]' % name
+
+                    if name in tweakable_props:
+                        # Fallof factor
+                        var2 = driver.variables.new()
+                        var2.name = 'factor'
+                        var2.targets[0].id_type = 'OBJECT'
+                        var2.targets[0].id = self.obj
+                        var2.targets[0].data_path = factorPb.path_from_id() + '["%s_factor"]' % name
+
 
         # Create Spring control constraints
         for sourceName, ctrlName in zip(self.mch_source, self.control_bones):
@@ -217,11 +343,11 @@ class Rig:
             driver.expression = "1 - follow_spring"
 
         # Constrain preview bones
-        for springName, previewName in zip(self.mch_target, self.preview_bones):
+        for deformName, previewName in zip(self.deform_bones, self.preview_bones):
             con = self.obj.pose.bones[previewName].constraints.new('COPY_TRANSFORMS')
             con.name = "Follow Manual"
             con.target = self.obj
-            con.subtarget = springName
+            con.subtarget = deformName
 
         # Create a lookup table for exposing spring settings
         lookup = {}
@@ -229,11 +355,21 @@ class Rig:
             for key, value in zip(l, self.mch_target):
                 lookup[key] = value
 
-        out = script.format(
-            prop_bone=propBoneName,
-            lookup=lookup,
-            control_bones=self.control_bones,
-            preview_bones=self.preview_bones,
-            spring_bones=self.mch_target
+        out = get_main_script(
+            not self.params.unify_spring_props,
+            propBoneName,
+            lookup,
+            self.control_bones,
+            self.preview_bones,
+            self.mch_target
         )
+        print(out)
         return [out, ]
+
+def add_parameters(params):
+    params.unify_spring_props = BoolProperty(name="Unify spring properties", default=True,
+            description="Instead of exposing each spring bone's poperties, expose one set for all")
+
+def parameters_ui(layout, params):
+    r = layout.row()
+    r.prop(params, "unify_spring_props")
