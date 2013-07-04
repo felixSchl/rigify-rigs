@@ -20,11 +20,13 @@ from ..utils import connected_children_names
 from ..utils import MetarigError
 from ..utils import copy_bone
 from ..utils import strip_org, make_mechanism_name, make_deformer_name
-from ..utils import create_circle_widget, create_bone_widget
+from ..utils import create_bone_widget
 from ..utils import align_bone_roll
+
 
 def gen_tabs(depth):
     return " " * 4 * depth
+
 
 def get_spring_prop_str(data_path, indent=1, escape=False):
     """ Expose generic spring constraint props, provided """
@@ -45,6 +47,7 @@ def get_spring_prop_str(data_path, indent=1, escape=False):
         l='["' if escape else "",
         r='"]' if escape else ""
     )
+
 
 def get_props_display(individual, indent=1):
     indi = """
@@ -87,7 +90,10 @@ def get_props_display(individual, indent=1):
             )
         )
 
-def get_main_script(individual, prop_bone, lookup, control_bones, preview_bones, spring_bones):
+
+def get_main_script(individual, prop_bone, lookup, control_bones,
+                    preview_bones, spring_bones
+                    ):
     main_script = """
 prop_bone = "{prop_bone}"
 lookup = {lookup}
@@ -109,6 +115,7 @@ if is_selected(control_bones + preview_bones):
         properties_display=disp
     )
 
+
 class Rig:
     def __init__(self, obj, bone, params):
         self.obj = obj
@@ -123,39 +130,56 @@ class Rig:
         bpy.ops.object.mode_set(mode='OBJECT')
 
     def generate(self):
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Create duplicates
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         bpy.ops.object.mode_set(mode='EDIT')
 
         # Create deform bones
-        self.deform_bones = [copy_bone(self.obj, bone, make_deformer_name(strip_org(bone))) for bone in self.org_bones]
+        self.deform_bones = [
+            copy_bone(self.obj, bone, make_deformer_name(strip_org(bone)))
+            for bone in self.org_bones
+        ]
 
         # Create mch chain 1: Spring bone source
         self.mch_source = [
-            copy_bone(self.obj, bone, make_mechanism_name(strip_org(bone) + "_source")) for bone in self.org_bones
+            copy_bone(self.obj, bone,
+                      make_mechanism_name(strip_org(bone) + "_source")
+                      )
+            for bone in self.org_bones
         ]
 
         # Create mch chain 2: Spring bone target
         self.mch_target = [
-            copy_bone(self.obj, bone, make_mechanism_name(strip_org(bone) + "_target")) for bone in self.org_bones
+            copy_bone(self.obj, bone,
+            make_mechanism_name(strip_org(bone) + "_target"))
+            for bone in self.org_bones
         ]
 
         # Create control bones
-        self.control_bones = [copy_bone(self.obj, bone, strip_org(bone)) for bone in self.org_bones]
+        self.control_bones = [
+                copy_bone(self.obj, bone, strip_org(bone))
+                for bone in self.org_bones
+        ]
 
         # Create spring preview bones
-        self.preview_bones = [copy_bone(self.obj, bone, strip_org(bone) + "_preview") for bone in self.org_bones]
+        self.preview_bones = [
+                copy_bone(self.obj, bone, strip_org(bone) + "_preview")
+                for bone in self.org_bones
+        ]
 
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Parenting/parent
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         def parent(childName, parentName, keep_offset):
             bpy.ops.armature.select_all(action='DESELECT')
-            self.obj.data.edit_bones[childName].select = True
-            self.obj.data.edit_bones[parentName].select = True
-            self.obj.data.edit_bones.active = self.obj.data.edit_bones[parentName]
-            bpy.ops.armature.parent_set(type='OFFSET' if keep_offset else 'CONNECTED')
+            edit_bones = self.obj.data.edit_bones
+            edit_bones[childName].select = True
+            edit_bones[parentName].select = True
+            edit_bones.active = edit_bones[parentName]
+            bpy.ops.armature.parent_set(
+                    type='OFFSET' if keep_offset else 'CONNECTED'
+                    )
 
         # Ensure control bone parent integrity
         lastName = None
@@ -163,7 +187,8 @@ class Rig:
             if lastName:
                 parent(bName, lastName, False)
             else:
-                self.obj.data.edit_bones[bName].parent = self.obj.data.edit_bones[self.original_parent]
+                edit_bones = self.obj.data.edit_bones
+                edit_bones[bName].parent = edit_bones[self.original_parent]
             lastName = bName
 
         # Deform and preview bones need no parents
@@ -172,7 +197,8 @@ class Rig:
 
         # Cross-parent source and target spring bones
         tot = len(self.mch_source)
-        for i, (sourceName, targetName) in enumerate(zip(self.mch_source, self.mch_target)):
+        for i, (sourceName, targetName) in \
+                enumerate(zip(self.mch_source, self.mch_target)):
             parent(targetName, sourceName, True)
             if i < tot - 1:
                 parent(
@@ -180,29 +206,31 @@ class Rig:
                     targetName, True
                 )
 
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Align Bone Roll
-        #---------------------------------------------------------------------------------------------------------------
-        for target_list in [self.control_bones, self.deform_bones, self.mch_source,
-                            self.mch_target, self.preview_bones]:
+        #----------------------------------------------------------------------
+        for target_list in [self.control_bones, self.deform_bones,
+                            self.mch_source, self.mch_target,
+                            self.preview_bones]:
             for orgName, targetName in zip(self.org_bones, target_list):
                 align_bone_roll(self.obj, targetName, orgName)
 
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Create widgets
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         bpy.ops.object.mode_set(mode='OBJECT')
         for b in self.preview_bones:
             create_bone_widget(self.obj, b)
+            self.obj.pose.bones[b].bone.hide_select = True
 
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Transform locks
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         for b in self.preview_bones:
             self.obj.pose.bones[b].lock_rotation[0] = True
             self.obj.pose.bones[b].lock_rotation[1] = True
             self.obj.pose.bones[b].lock_rotation[2] = True
-            
+
             self.obj.pose.bones[b].lock_rotations_4d = True
             self.obj.pose.bones[b].lock_rotation_w = True
 
@@ -213,10 +241,10 @@ class Rig:
             self.obj.pose.bones[b].lock_scale[0] = True
             self.obj.pose.bones[b].lock_scale[1] = True
             self.obj.pose.bones[b].lock_scale[2] = True
-        
-        #---------------------------------------------------------------------------------------------------------------
+
+        #----------------------------------------------------------------------
         # Properties
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         propBoneName = self.org_bones[0]
         propPb = self.obj.pose.bones[propBoneName]
 
@@ -248,9 +276,9 @@ class Rig:
                 prop["soft_min"] = prop["min"] = mini
                 prop["soft_max"] = prop["max"] = maxi
 
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         # Constraining
-        #---------------------------------------------------------------------------------------------------------------
+        #----------------------------------------------------------------------
         bpy.ops.object.mode_set(mode='OBJECT')
 
         # Create Spring constraints
@@ -262,7 +290,8 @@ class Rig:
             con.target = self.obj
             con.subtarget = sourceName
 
-            # If "shared propreties" are enabled, create a factor property for each "tweakable" poperty
+            # If "shared propreties" are enabled,
+            # create a factor property for ey
             if self.params.unify_spring_props:
                 tweakable_props = [
                     "speed",
@@ -272,7 +301,9 @@ class Rig:
 
                 for n in tweakable_props:
                     prop_name = "%s_factor" % n
-                    prop = rna_idprop_ui_prop_get(factorPb, prop_name, create=True)
+                    prop = rna_idprop_ui_prop_get(
+                            factorPb, prop_name, create=True
+                            )
                     factorPb[prop_name] = 1
                     prop["soft_min"] = prop["min"] = 0
                     prop["soft_max"] = prop["max"] = 100
@@ -293,7 +324,8 @@ class Rig:
                     var1.name = 'var'
                     var1.targets[0].id_type = 'OBJECT'
                     var1.targets[0].id = self.obj
-                    var1.targets[0].data_path = propPb.path_from_id() + '["%s"]' % name
+                    data_path = propPb.path_from_id() + '["%s"]' % name
+                    var1.targets[0].data_path = data_path
 
                     if name in tweakable_props:
                         # Fallof factor
@@ -301,21 +333,27 @@ class Rig:
                         var2.name = 'factor'
                         var2.targets[0].id_type = 'OBJECT'
                         var2.targets[0].id = self.obj
-                        var2.targets[0].data_path = factorPb.path_from_id() + '["%s_factor"]' % name
-
+                        prop_path = '["%s_factor"]' % name
+                        data_path = factorPb.path_from_id() + prop_path
+                        var2.targets[0].data_path = data_path
 
         # Create Spring control constraints
         for sourceName, ctrlName in zip(self.mch_source, self.control_bones):
-            con = self.obj.pose.bones[sourceName].constraints.new('COPY_ROTATION')
+            con = self.obj.pose.bones[sourceName].constraints.new(
+                    'COPY_ROTATION'
+                    )
             con.target = self.obj
             con.subtarget = ctrlName
             con.target_space = 'LOCAL'
             con.owner_space = 'LOCAL'
 
         # Constrain deformation bones
-        for defName, springName, ctrlName in zip(self.deform_bones, self.mch_target, self.control_bones):
+        for defName, springName, ctrlName in zip(
+                self.deform_bones, self.mch_target, self.control_bones
+        ):
             # Follow Spring
-            con = self.obj.pose.bones[defName].constraints.new('COPY_TRANSFORMS')
+            con = self.obj.pose.bones[defName].constraints.new(
+                    'COPY_TRANSFORMS')
             con.name = "Follow Spring"
             con.target = self.obj
             con.subtarget = springName
@@ -324,12 +362,14 @@ class Rig:
             var.name = "follow_spring"
             var.targets[0].id_type = 'OBJECT'
             var.targets[0].id = self.obj
-            var.targets[0].data_path = propPb.path_from_id() + '["follow_spring"]'
+            data_path = propPb.path_from_id() + '["follow_spring"]'
+            var.targets[0].data_path = data_path
             driver.type = 'SCRIPTED'
             driver.expression = "follow_spring"
 
             # Follow manual control
-            con = self.obj.pose.bones[defName].constraints.new('COPY_TRANSFORMS')
+            con = self.obj.pose.bones[defName].constraints.new(
+                    'COPY_TRANSFORMS')
             con.name = "Follow Manual"
             con.target = self.obj
             con.subtarget = ctrlName
@@ -338,13 +378,18 @@ class Rig:
             var.name = "follow_spring"
             var.targets[0].id_type = 'OBJECT'
             var.targets[0].id = self.obj
-            var.targets[0].data_path = propPb.path_from_id() + '["follow_spring"]'
+            data_path = propPb.path_from_id() + '["follow_spring"]'
+            var.targets[0].data_path = data_path
             driver.type = 'SCRIPTED'
             driver.expression = "1 - follow_spring"
 
         # Constrain preview bones
-        for deformName, previewName in zip(self.deform_bones, self.preview_bones):
-            con = self.obj.pose.bones[previewName].constraints.new('COPY_TRANSFORMS')
+        for deformName, previewName in zip(
+                self.deform_bones, self.preview_bones
+        ):
+            con = self.obj.pose.bones[previewName].constraints.new(
+                    'COPY_TRANSFORMS'
+            )
             con.name = "Follow Manual"
             con.target = self.obj
             con.subtarget = deformName
@@ -363,12 +408,15 @@ class Rig:
             self.preview_bones,
             self.mch_target
         )
-        print(out)
         return [out, ]
 
+
 def add_parameters(params):
-    params.unify_spring_props = BoolProperty(name="Unify spring properties", default=True,
-            description="Instead of exposing each spring bone's poperties, expose one set for all")
+    params.unify_spring_props = BoolProperty(
+            name="Unify spring properties", default=True,
+            description="Instead of exposing each spring bone's poperties, "
+                    "expose one set for all")
+
 
 def parameters_ui(layout, params):
     r = layout.row()
