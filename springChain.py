@@ -351,6 +351,13 @@ class Rig:
         for defName, springName, ctrlName in zip(
                 self.deform_bones, self.mch_target, self.control_bones
         ):
+            # Follow manual control
+            con = self.obj.pose.bones[defName].constraints.new(
+                    'COPY_TRANSFORMS')
+            con.name = "Follow Manual"
+            con.target = self.obj
+            con.subtarget = ctrlName
+
             # Follow Spring
             con = self.obj.pose.bones[defName].constraints.new(
                     'COPY_TRANSFORMS')
@@ -366,22 +373,6 @@ class Rig:
             var.targets[0].data_path = data_path
             driver.type = 'SCRIPTED'
             driver.expression = "follow_spring"
-
-            # Follow manual control
-            con = self.obj.pose.bones[defName].constraints.new(
-                    'COPY_TRANSFORMS')
-            con.name = "Follow Manual"
-            con.target = self.obj
-            con.subtarget = ctrlName
-            driver = con.driver_add("influence").driver
-            var = driver.variables.new()
-            var.name = "follow_spring"
-            var.targets[0].id_type = 'OBJECT'
-            var.targets[0].id = self.obj
-            data_path = propPb.path_from_id() + '["follow_spring"]'
-            var.targets[0].data_path = data_path
-            driver.type = 'SCRIPTED'
-            driver.expression = "1 - follow_spring"
 
         # Constrain preview bones
         for deformName, previewName in zip(
