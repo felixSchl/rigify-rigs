@@ -13,15 +13,14 @@ The deformation bones copy either the control or the spring bones.
 
 import bpy
 from bpy.props import *
-
 from rna_prop_ui import rna_idprop_ui_prop_get
-
+import math
+from mathutils import Matrix
 from ..utils import connected_children_names
 from ..utils import MetarigError
 from ..utils import copy_bone
 from ..utils import strip_org, make_mechanism_name, make_deformer_name
 from ..utils import create_bone_widget
-from ..utils import align_bone_roll
 
 
 def gen_tabs(depth):
@@ -412,3 +411,48 @@ def add_parameters(params):
 def parameters_ui(layout, params):
     r = layout.row()
     r.prop(params, "unify_spring_props")
+
+# This is copied from old rigify since it has been removed since...
+def align_bone_roll(obj, bone1, bone2):
+    """ Aligns the roll of two bones.  """
+
+    bone1_e = obj.data.edit_bones[bone1]
+    bone2_e = obj.data.edit_bones[bone2]
+    
+    bone1_e.roll = 0.0
+    
+    # Get the directions the bones are pointing in, as vectors
+    y1 = bone1_e.y_axis
+    x1 = bone1_e.x_axis
+    y2 = bone2_e.y_axis
+    x2 = bone2_e.x_axis
+    
+    # Get the shortest axis to rotate bone1 on to point in the same direction as bone2
+    axis = y1.cross(y2)
+    axis.normalize()
+    
+    # Angle to rotate on that shortest axis
+    angle = y1.angle(y2)
+    
+    # Create rotation matrix to make bone1 point in the same direction as bone2
+    rot_mat = Matrix.Rotation(angle, 3, axis)
+    
+    # Roll factor
+    x3 = rot_mat * x1
+    dot = x2 * x3
+    if dot > 1.0:
+        dot = 1.0
+    elif dot < -1.0:
+        dot = -1.0
+    roll = math.acos(dot)
+    
+    # Set the roll
+    bone1_e.roll = roll
+    
+    # Check if we rolled in the right direction
+    x3 = rot_mat * bone1_e.x_axis
+    check = x2 * x3
+    
+    # If not, reverse
+    if check < 0.9999:
+        bone1_e.roll = -roll
